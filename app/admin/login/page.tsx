@@ -50,10 +50,14 @@ function AdminLoginContent() {
   const handleGoogleLogin = async () => {
     setIsLoading(true)
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
+      // Check if running in iframe (like v0 preview) - use popup instead
+      const isInIframe = window.self !== window.top
+      
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
           redirectTo: `${window.location.origin}/auth/callback`,
+          skipBrowserRedirect: isInIframe,
         },
       })
 
@@ -61,8 +65,32 @@ function AdminLoginContent() {
         console.error("[admin-oauth] Google sign-in error", error)
         toast.error("Failed to initiate Google sign-in")
         setIsLoading(false)
+        return
       }
-      // Note: User will be redirected to Google, so we don't set isLoading(false) here
+
+      // If in iframe, open OAuth in a new window/tab
+      if (isInIframe && data?.url) {
+        const popup = window.open(data.url, "_blank", "noopener,noreferrer")
+        if (!popup) {
+          toast.error("Please allow popups for this site to sign in with Google")
+          setIsLoading(false)
+          return
+        }
+        
+        // Listen for auth state changes when user completes OAuth in popup
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+          if (event === "SIGNED_IN" && session) {
+            subscription.unsubscribe()
+            router.replace("/admin/dashboard")
+          }
+        })
+        
+        // Reset loading state after a timeout if popup is closed without completing
+        setTimeout(() => {
+          setIsLoading(false)
+        }, 60000) // 1 minute timeout
+      }
+      // If not in iframe, the redirect will happen automatically
     } catch (err) {
       console.error("[admin-oauth] Unexpected error", err)
       toast.error("An unexpected error occurred")
